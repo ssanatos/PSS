@@ -38,13 +38,15 @@ input[type=number]{width:80px;background:#12151a;color:var(--tx);border:1px soli
  <h1>성형 시뮬레이터</h1>
  <p class="s">얼굴 3D 스캔에 시술 정도(mm)를 적용해 예상 모습을 미리 봅니다. 파일은 서버로 전송되지 않고 브라우저 안에서만 처리돼요.</p>
  <h2>0. 사진으로 얼굴 만들기 (베타)</h2>
- <label class="btn pri" style="display:inline-block">얼굴 사진 선택 (여러 장, 최대 5장)<input id="ph" type="file" accept="image/*" multiple hidden></label>
+ <label class="btn pri" style="display:inline-block">얼굴 사진 선택 (여러 장, 최대 7장)<input id="ph" type="file" accept="image/*" multiple hidden></label>
  <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="sil"> 사진 윤곽선으로 얼굴형 보정 (실험적 · 켜고 겹쳐보기로 비교하세요)</label>
+ <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="pm" checked> 사진 색 변화로 사진 간 위치 맞추기 (눈썹·눈 등 어긋남 보정)</label>
  <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="dense"> 사진 질감 매칭으로 표면 정밀화 (실험적 · 카메라 추정이 정확할 때만 도움, 끄는 걸 기본으로 권장)</label>
  <p class="s" id="phst" style="white-space:pre-line">정면·45°·측면 사진을 한꺼번에 고르세요(순서 무관, 정면은 자동 판별). 무표정·입 다문 사진, 머리카락이 얼굴을 가리지 않게 찍어주세요. 사진은 서버로 전송되지 않고, 얼굴 인식 모델 파일만 내려받아요.</p>
- <div class="btns" style="margin-top:6px"><button id="edopen">점 보정 · 특징점 에디터</button></div>
+ <div class="btns" style="margin-top:6px"><button id="edopen">점 보정 · 특징점 에디터</button><button id="retry" style="display:none">실패한 사진 다시 읽기</button></div>
  <label class="s" style="display:block;margin-top:6px">실측 눈동자 간격(mm) <input id="ipd" type="number" value="63" min="45" max="80" step="0.5" style="width:70px"> 모르면 63(평균)</label>
  <label class="s" style="display:block">메쉬 세밀도 <select id="lod"><option value="2">보통</option><option value="3" selected>높음 (눈·코·입 변형이 더 부드러움)</option></select></label>
+ <label class="s" style="display:block">눈 주변 세밀도 <select id="eyelod"><option value="0">끔</option><option value="1">+1</option><option value="2" selected>+2 (눈꺼풀·눈동자 라인)</option></select></label>
  <div id="ovl"></div>
  <h2>1. 3D 파일</h2>
  <label class="btn pri" style="display:inline-block">파일 선택 (glb · obj · ply)<input id="file" type="file" accept=".glb,.gltf,.obj,.ply" hidden></label>
@@ -86,7 +88,7 @@ input[type=number]{width:80px;background:#12151a;color:var(--tx);border:1px soli
 </div>
 
 <div id="ed" style="display:none"><div id="edtop"><b>점 보정 에디터</b><span id="edtabs"></span>
- <label class="s"><input type="radio" name="edm" value="liq" checked> 메시 밀기</label><label class="s">브러시 <input id="edr" type="range" min="4" max="30" value="12" style="width:90px"></label><label class="s"><input type="radio" name="edm" value="move"> 점 옮기기</label><label class="s"><input type="radio" name="edm" value="mtp"> 특징점 추가</label>
+ <label class="s"><input type="radio" name="edm" value="liq" checked> 메시 밀기</label><label class="s">브러시 <input id="edr" type="range" min="4" max="30" value="12" style="width:90px"></label><label class="s"><input type="radio" name="edm" value="pin"> 특징점 끌기</label><label class="s"><input type="radio" name="edm" value="move"> 점 옮기기</label><label class="s"><input type="radio" name="edm" value="mtp"> 특징점 추가</label>
  <button id="edmtp" disabled>특징점 확정</button><button id="edapply" class="pri">적용 (다시 만들기)</button><button id="edclose">닫기</button></div>
  <div id="edmain"><canvas id="edc"></canvas><div id="edside"></div></div></div>
 <script type="module">
@@ -401,8 +403,11 @@ function silFit(X,T,Ts,M,yLim,rounds){const n=X.length,nb=X.map(()=>[]);
     if(ins(q[0]+ux*u,q[1]+uy*u)&&!ins(q[0]+ux*(u+1),q[1]+uy*(u+1))){best=u+.5;break}}
    if(best===null)continue;
    const dx=best*ux,dy=best*uy;c[v]=1;for(let a=0;a<3;a++)D[v][a]=t.s*(R[a*3]*dx+R[a*3+1]*dy)}
-  for(let it=0;it<15;it++)for(let v=0;v<n;v++){if(c[v]||!nb[v].length)continue;const s=[0,0,0];for(const u of nb[v])for(let a=0;a<3;a++)s[a]+=D[u][a];for(let a=0;a<3;a++)D[v][a]=s[a]/nb[v].length}
-  for(let v=0;v<n;v++)for(let a=0;a<3;a++)X[v][a]+=.6*D[v][a]}
+  const cap=.05*(x1-x0);for(let v=0;v<n;v++)if(c[v]){const l=Math.hypot(...D[v]);if(l>cap)for(let a=0;a<3;a++)D[v][a]*=cap/l} // 한 번에 너무 크게 움직이지 않게
+  for(let it=0;it<2;it++){const E=D.map(d=>d.slice());for(let v=0;v<n;v++){if(!c[v]||X[v][1]>yLim)continue;const ks=nb[v].filter(u=>c[u]&&X[u][1]<=yLim);if(!ks.length)continue;
+   for(let a=0;a<3;a++)E[v][a]=.5*D[v][a]+.5*ks.reduce((s,u)=>s+D[u][a],0)/ks.length}for(let v=0;v<n;v++)D[v]=E[v]} // 윤곽 점끼리 보정량을 평활 (들쭉날쭉 방지)
+  for(let it=0;it<40;it++)for(let v=0;v<n;v++){if(c[v]||!nb[v].length)continue;const s=[0,0,0];for(const u of nb[v])for(let a=0;a<3;a++)s[a]+=D[u][a];for(let a=0;a<3;a++)D[v][a]=s[a]/nb[v].length}
+  for(let v=0;v<n;v++)for(let a=0;a<3;a++)X[v][a]+=.5*D[v][a]}
  return X}
 function chamfer(b,w,h,fg){const d=new Float32Array(w*h);for(let i=0;i<w*h;i++)d[i]=b[i]===fg?1e9:0;
  for(let y=0;y<h;y++)for(let x=0;x<w;x++){const i=y*w+x;let v=d[i];if(!v)continue;
@@ -452,6 +457,44 @@ function denseRefine(X,T,Ts,G,rounds){const n=X.length,V=G.length,K=8,nb=X.map((
   for(let it=0;it<4;it++){const E=D.slice();for(let v=0;v<n;v++){if(!nb[v].length)continue;let sm=0;for(const u of nb[v])sm+=D[u];E[v]=.5*D[v]+.5*sm/nb[v].length}D.set(E)}
   X=X.map((p,v)=>[p[0]+N[v][0]*D[v]*.7,p[1]+N[v][1]*D[v]*.7,p[2]+N[v][2]*D[v]*.7])}
  return X}
+// 선택 영역의 삼각형만 T자 균열 없이 세분화 (영역 둘레의 이웃 삼각형은 1~2개 변만 쪼개서 연결)
+function refineRegion(V,UV,T,inR){const mid=new Map(),mark=new Set(),key=(a,b)=>a<b?a+'_'+b:b+'_'+a;
+ const gm=(a,b)=>{const k=key(a,b);let m=mid.get(k);if(m===undefined){m=V.length;V.push(V[a].map((x,i)=>(x+V[b][i])/2));UV.forEach(u=>u.push([(u[a][0]+u[b][0])/2,(u[a][1]+u[b][1])/2]));mid.set(k,m)}return m};
+ for(const t of T)if(inR(t[0])||inR(t[1])||inR(t[2]))for(let k=0;k<3;k++)mark.add(key(t[k],t[(k+1)%3]));
+ const o=[];
+ for(const[a,b,c]of T){const ab=mark.has(key(a,b)),bc=mark.has(key(b,c)),ca=mark.has(key(c,a)),n=ab+bc+ca;if(!n){o.push([a,b,c]);continue}
+  const x=ab?gm(a,b):-1,y=bc?gm(b,c):-1,z=ca?gm(c,a):-1;
+  if(n===3)o.push([a,x,z],[x,b,y],[z,y,c],[x,y,z]);
+  else if(n===1){if(ab)o.push([a,x,c],[x,b,c]);else if(bc)o.push([a,b,y],[a,y,c]);else o.push([a,b,z],[z,b,c])}
+  else if(!ca)o.push([b,y,x],[a,x,y],[a,y,c]);else if(!ab)o.push([c,z,y],[a,b,y],[a,y,z]);else o.push([a,x,z],[x,b,c],[x,c,z])}
+ return o}
+const EYE=[[[33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246],[468,469,470,471,472]],[[263,249,390,373,374,380,381,382,362,398,384,385,386,387,388,466],[473,474,475,476,477]]];
+function eyeFix(V){if(V.length<478)return;for(const[lid,ir]of EYE)for(const k of ir){let w=0,z=0;for(const l of lid){const d=Math.hypot(V[k][0]-V[l][0],V[k][1]-V[l][1])+1e-6;w+=1/d;z+=V[l][2]/d}V[k][2]=z/w}} // 홍채를 눈꺼풀과 같은 면에
+// 기준 사진(0번)의 색 패치와 다른 사진의 패치를 비교해, 사진마다 점의 2D 위치 보정량을 구한다 (눈썹처럼 대비가 큰 곳 위주, 나머지는 주변 보정을 평균해 채움)
+function photoMatch(X,T,Ts,G,Po){const n=X.length,V=G.length,nb=X.map(()=>[]);for(const[a,b,c]of T){nb[a].push(b,c);nb[b].push(a,c);nb[c].push(a,b)}
+ let x0=1e18,x1=-1e18;for(const p of X){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0])}
+ const fw=x1-x0,h=.025*fw,SR=Math.max(4,Math.round(.03*fw)),N=vnorm(X,T),dir=Ts.map((t,i)=>i?[t.R[2],t.R[5],t.R[8]]:[0,0,1]),out=[null];
+ const fc=(v,i)=>N[v][0]*dir[i][0]+N[v][1]*dir[i][1]+N[v][2]*dir[i][2];
+ for(let i=1;i<V;i++){const t=Ts[i],C=X.map(()=>null);
+  for(let v=0;v<n;v++){if(!G[0]||!G[i]||fc(v,0)<.4||fc(v,i)<.4)continue;const nv=N[v],a0=Math.abs(nv[1])<.9?[0,1,0]:[1,0,0];
+   let t1=[a0[1]*nv[2]-a0[2]*nv[1],a0[2]*nv[0]-a0[0]*nv[2],a0[0]*nv[1]-a0[1]*nv[0]];const l=Math.hypot(...t1);t1=t1.map(x=>x/l);
+   const t2=[nv[1]*t1[2]-nv[2]*t1[1],nv[2]*t1[0]-nv[0]*t1[2],nv[0]*t1[1]-nv[1]*t1[0]],pts=[];
+   for(let a=-2;a<=2;a++)for(let b=-2;b<=2;b++)pts.push([X[v][0]+(t1[0]*a+t2[0]*b)*h,X[v][1]+(t1[1]*a+t2[1]*b)*h,X[v][2]+(t1[2]*a+t2[2]*b)*h]);
+   const ref=[];let bad=false;for(const p of pts){const q=proj(Ts[0]||ID,p),val=gsamp(G[0],q[0],q[1]);if(val!==val){bad=true;break}ref.push(val)}
+   if(bad)continue;let mean=0;for(const x of ref)mean+=x;mean/=ref.length;let vr=0;for(const x of ref)vr+=(x-mean)*(x-mean);if(vr/ref.length<36)continue; // 질감이 약한 곳은 건너뜀
+   const q=pts.map(p=>proj(t,p)),ev=(sx,sy)=>{const a=[];for(const c of q){const val=gsamp(G[i],c[0]+sx,c[1]+sy);if(val!==val)return -2;a.push(val)}return ncc(ref,a)};
+   let best=-2,bx=0,by=0;for(let sy=-SR;sy<=SR;sy+=2)for(let sx=-SR;sx<=SR;sx+=2){const e=ev(sx,sy);if(e>best){best=e;bx=sx;by=sy}}
+   let cx=bx,cy=by;for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){const e=ev(bx+dx,by+dy);if(e>best){best=e;cx=bx+dx;cy=by+dy}}
+   if(best<.7)continue;const e0=ev(cx,cy),sub=(a,b,c)=>{const d=a-2*b+c;return Math.abs(d)<1e-9?0:Math.max(-.5,Math.min(.5,.5*(a-c)/d))};
+   const fx=sub(ev(cx-1,cy),e0,ev(cx+1,cy)),fy=sub(ev(cx,cy-1),e0,ev(cx,cy+1)); // 소수점 단위로 다듬기
+   const c0=proj(t,X[v]);C[v]=[c0[0]+cx+fx-Po[i][v][0],c0[1]+cy+fy-Po[i][v][1]]}
+  for(let v=0;v<n;v++){if(!C[v])continue;const ks=nb[v].filter(u=>C[u]);if(ks.length<2)continue; // 이웃과 크게 다른 보정은 오매칭으로 보고 버림
+   const mx=ks.map(u=>C[u][0]).sort((a,b)=>a-b)[ks.length>>1],my=ks.map(u=>C[u][1]).sort((a,b)=>a-b)[ks.length>>1];if(Math.hypot(C[v][0]-mx,C[v][1]-my)>.02*fw)C[v].bad=1}
+  for(let v=0;v<n;v++)if(C[v]&&C[v].bad)C[v]=null;
+  const known=C.map(c=>!!c),cc=C.map(c=>c?c.slice():[0,0]);
+  for(let it=0;it<60;it++)for(let v=0;v<n;v++){if(known[v]||!nb[v].length)continue;let sx=0,sy=0;for(const u of nb[v]){sx+=cc[u][0];sy+=cc[u][1]}cc[v]=[sx/nb[v].length,sy/nb[v].length]}
+  const cap=.03*fw;out[i]=cc.map(c=>{const l=Math.hypot(c[0],c[1]);return l>cap?[c[0]*cap/l,c[1]*cap/l]:c})}
+ return out}
 //</math>
 
 let lastFiles=null,PH=null,CUR=null,MTP=[],EDI=0,MAN=null;
@@ -463,10 +506,10 @@ function detectFace(L,im){const W=im.naturalWidth,H=im.naturalHeight,k=Math.min(
   let q=null;try{q=L.detect(c).faceLandmarks[0]}catch(e){}
   if(q)return q.map(p=>pad?{x:(p.x*S-ox)/w,y:(p.y*S-oy)/h,z:p.z*S/w}:p)}
  return null}
-async function getLM(){if(flm)return flm;
+async function getLM(cpu){if(flm&&!cpu)return flm;
  const fs=await MP.FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
  const o=d=>({baseOptions:{modelAssetPath:'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',delegate:d},runningMode:'IMAGE',numFaces:1,minFaceDetectionConfidence:.2,minFacePresenceConfidence:.2});
- try{flm=await MP.FaceLandmarker.createFromOptions(fs,o('GPU'))}catch(e){flm=await MP.FaceLandmarker.createFromOptions(fs,o('CPU'))}
+ if(cpu)flm=await MP.FaceLandmarker.createFromOptions(fs,o('CPU'));else try{flm=await MP.FaceLandmarker.createFromOptions(fs,o('GPU'))}catch(e){flm=await MP.FaceLandmarker.createFromOptions(fs,o('CPU'))}
  return flm}
 let fseg=null;
 async function getSeg(){if(fseg)return fseg;
@@ -491,18 +534,30 @@ function drawOv(D,Ts,X,T){const box=$('#ovl');box.innerHTML='';const N=vnorm(X,T
    g.moveTo(Q[a][0]*k,-Q[a][1]*k);g.lineTo(Q[b][0]*k,-Q[b][1]*k);g.lineTo(Q[cc][0]*k,-Q[cc][1]*k);g.closePath()}
   g.stroke();box.append(c)})}
 const loadImg=f=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(f)});
+let PEND=[];
+async function readPhoto(L,f,im,st){let q=null; // 같은 사진도 가끔 실패하므로 몇 번 다시 시도
+ for(let k=0;k<3&&!q;k++){q=detectFace(L,im);if(!q)await new Promise(r=>setTimeout(r,150))}
+ if(!q)return null;const W=im.naturalWidth,H=im.naturalHeight,a=q[234],b=q[454],i1=q[468],i2=q[473];
+ return{im,name:f.name,uv:q.slice(0,478).map(p=>[p.x,p.y]),P:q.slice(0,478).map(p=>[p.x*W,-p.y*H,-p.z*W]),W,H,mask:await getMask(im,st,f.name),
+  yaw:Math.atan2(Math.abs(a.z-b.z),Math.abs(a.x-b.x)),ipd:Math.hypot((i1.x-i2.x)*W,(i1.y-i2.y)*H,(i1.z-i2.z)*W)}}
+async function retryFailed(){const st=$('#phst');if(!PEND.length)return;
+ try{st.textContent='실패한 사진을 다시 읽는 중…';let L=await getLM();const still=[],got=[];
+  for(const p of PEND){if(CUR&&CUR.length+got.length>=7){still.push(p);continue}let e=await readPhoto(L,p.f,p.im,st);if(!e){L=await getLM(true);e=await readPhoto(L,p.f,p.im,st)} // 그래도 안 되면 CPU로
+   e?got.push(e):still.push(p)}
+  PEND=still;$('#retry').style.display=PEND.length?'inline-block':'none';
+  if(!got.length){st.textContent='⚠ 이번에도 읽지 못했어요 ('+PEND.length+'장). 다시 눌러 보세요.';return}
+  if(!CUR){got.sort((a,b)=>a.yaw-b.yaw);CUR=got;MTP=[];MAN=null;EDI=0}else{for(const e of got)CUR.push(e);CUR.pmDone=false} // 기준 사진은 그대로 두고 뒤에 추가
+  build(CUR);if(PEND.length)st.textContent+='\n⚠ 아직 못 읽은 사진 '+PEND.length+'장 (다시 읽기 가능)'
+ }catch(e){st.textContent='⚠ '+(e.message||e)}}
 async function fromPhotos(fs){
  const st=$('#phst');lastFiles=fs;
  try{
   if(!window.MP)throw Error('얼굴 인식 라이브러리를 아직 불러오지 못했어요. 잠시 후 다시 시도하세요.');
   st.textContent='얼굴 인식 모델 불러오는 중… (처음엔 몇 초 걸려요)';
-  const L=await getLM(),D=[];
-  for(const f of fs.slice(0,5)){const im=await loadImg(f),q=detectFace(L,im);
-   if(!q){st.textContent+='\n⚠ '+f.name+': 얼굴을 찾지 못해 건너뜀 (거의 옆얼굴이거나 얼굴이 가려진 경우 인식이 어려워요)';continue}
-   const W=im.naturalWidth,H=im.naturalHeight,a=q[234],b=q[454],i1=q[468],i2=q[473];
-   D.push({im,uv:q.slice(0,468).map(p=>[p.x,p.y]),P:q.slice(0,468).map(p=>[p.x*W,-p.y*H,-p.z*W]),
-    W,H,mask:await getMask(im,st,f.name),
-    yaw:Math.atan2(Math.abs(a.z-b.z),Math.abs(a.x-b.x)),ipd:Math.hypot((i1.x-i2.x)*W,(i1.y-i2.y)*H,(i1.z-i2.z)*W)})}
+  const L=await getLM(),D=[];PEND=[];
+  for(const f of fs.slice(0,7)){const im=await loadImg(f),e=await readPhoto(L,f,im,st);
+   if(e)D.push(e);else{PEND.push({f,im});st.textContent+='\n⚠ '+f.name+': 얼굴을 읽지 못했어요 (같은 사진도 가끔 실패해요 → "실패한 사진 다시 읽기")'}}
+  $('#retry').style.display=PEND.length?'inline-block':'none';
   if(!D.length)throw Error('얼굴을 찾지 못했어요. 얼굴이 크게 나온 사진으로 시도해 보세요.');
   D.sort((a,b)=>a.yaw-b.yaw); // 가장 정면인 사진이 기준
   CUR=D;MTP=[];MAN=null;EDI=0;build(D);
@@ -517,10 +572,12 @@ function build(D){const st=$('#phst');
   for(let i=1;i<n;i++){const T=align(D[i].P,D[0].P);Q.push(D[i].P.map(p=>app(T,p)));d.push([T.R[2],T.R[5],T.R[8]]);Ts.push(T)}
   let X;const T=mkTris(D[0].P);X=refine(D.map(e=>e.P),T,fuse(Q,d,T),Ts,3); // 여러 사진의 x,y 관측을 삼각측량해 깊이 보정
   if(MTP.length)X=applyMTP(X,T,Ts,MTP); // 사람이 찍은 특징점으로 깊이 보정
+  if($('#pm').checked&&!D.pmDone&&n>1){D.forEach(e=>{if(!e.g)e.g=grayOf(e.im)});const C=photoMatch(X,T,Ts,D.map(e=>e.g),D.map(e=>e.P)); // 사진끼리 색 변화로 위치 맞추기
+   for(let i=1;i<n;i++)D[i].P.forEach((p,v)=>{p[0]+=C[i][v][0];p[1]+=C[i][v][1];D[i].uv[v]=[p[0]/D[i].W,-p[1]/D[i].H]});D.pmDone=true;return build(D)}
   const M=D.map(e=>{if(!e.mask)return null;const pm=e.yaw>.35||!e.mask.fc; // 옆얼굴은 사람 전체 윤곽, 정면은 얼굴 피부 윤곽
    return{W:e.W,H:e.H,w:e.mask.w,h:e.mask.h,b:pm?e.mask.pb:e.mask.b,sdf:pm?e.mask.psdf:e.mask.sdf}});
   D.forEach((e,i)=>{e.moc=M[i]?outline(M[i]):null});
-  if($('#sil').checked&&M.some(Boolean))X=silFit(X,T,Ts,M,X[168][1],3); // 사진 윤곽선에 맞춰 얼굴형 보정
+  if($('#sil').checked&&M.some(Boolean))X=silFit(X,T,Ts,M,X[168][1],2); // 사진 윤곽선에 맞춰 얼굴형 보정
   if($('#dense').checked){D.forEach(e=>{if(!e.g)e.g=grayOf(e.im)});X=denseRefine(X,T,Ts,D.map(e=>e.g),2)} // 실험적
   if(MAN)X=X.map((p,v)=>[p[0]+MAN[v][0],p[1]+MAN[v][1],p[2]+MAN[v][2]]); // 사람이 직접 민 만큼 반영
   for(let i=1;i<n;i++)d[i]=[Ts[i].R[2],Ts[i].R[5],Ts[i].R[8]];
@@ -528,11 +585,16 @@ function build(D){const st=$('#phst');
   PH={Ts,M,T,yL:X[168][1],X:null,sel:null,fw:null,c:null};PH.sel=D.map((e,i)=>M[i]?contourSel(X,T,Ts[i]||ID,PH.yL):[]);
   PH.fw=D.map((e,i)=>{const t=Ts[i]||ID;let a=1e18,b=-1e18;for(const p of X){const q=proj(t,p);a=Math.min(a,q[0]);b=Math.max(b,q[0])}return b-a});
   PH.err=D.map((e,i)=>{const t=Ts[i]||ID,o={};for(const[id]of EDP){const q=proj(t,X[id]),pp=e.P[id];o[id]=Math.hypot(q[0]-pp[0],q[1]-pp[1])/PH.fw[i]}return o});PH.Xg=X; // 점별 사진 간 불일치
-  const N=vnorm(X,T);
-  let tris=T.map(t=>{const nn=[0,1,2].map(k=>t.reduce((s,v)=>s+N[v][k],0));let b=0,bv=-9;
+  // 눈 주변만 균열 없이 더 세분화 + 홍채 점을 눈꺼풀과 같은 면에 배치 (옆에서 본 눈꺼풀·눈동자 라인)
+  const RV=X.map(p=>p.slice()),RUV=D.map(e=>e.uv.map(u=>u.slice()));eyeFix(RV);let RT=T.map(t=>t.slice());
+  const ec=[[33,133],[263,362]].map(([a,b])=>RV[a].map((v,k)=>(v+RV[b][k])/2)),er=.75*Math.hypot(RV[33][0]-RV[133][0],RV[33][1]-RV[133][1],RV[33][2]-RV[133][2]);
+  const inEye=v=>ec.some(c=>Math.hypot(RV[v][0]-c[0],RV[v][1]-c[1],RV[v][2]-c[2])<er);
+  for(let l=0;l<(+$('#eyelod').value||0);l++)RT=refineRegion(RV,RUV,RT,inEye);
+  const N=vnorm(RV,RT),GC=Math.min(n,4),GR=Math.ceil(n/GC);
+  let tris=RT.map(t=>{const nn=[0,1,2].map(k=>t.reduce((s,v)=>s+N[v][k],0));let b=0,bv=-9;
    d.forEach((di,i)=>{const c=nn[0]*di[0]+nn[1]*di[1]+nn[2]*di[2];
-    if(c>bv&&t.every(v=>{const u=D[i].uv[v];return u[0]>0&&u[0]<1&&u[1]>0&&u[1]<1})){bv=c;b=i}});
-   return t.map(v=>[...X[v],(b+D[b].uv[v][0])/n,1-D[b].uv[v][1]])});
+    if(c>bv&&t.every(v=>{const u=RUV[i][v];return u[0]>0&&u[0]<1&&u[1]>0&&u[1]<1})){bv=c;b=i}});
+   return t.map(v=>[...RV[v],((b%GC)+RUV[b][v][0])/GC,1-(Math.floor(b/GC)+RUV[b][v][1])/GR])});
   for(let l=0;l<(+$('#lod').value||2);l++)tris=sub(tris);
   const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
   for(const t of tris)for(const p of t)for(let k=0;k<3;k++){mn[k]=Math.min(mn[k],p[k]);mx[k]=Math.max(mx[k],p[k])}
@@ -540,7 +602,7 @@ function build(D){const st=$('#phst');
   tris.forEach((t,i)=>t.forEach((p,j)=>{const o=i*3+j;for(let k=0;k<3;k++)pos[o*3+k]=p[k]-c[k];uv[o*2]=p[3];uv[o*2+1]=p[4];
    const key=p[0].toFixed(3)+','+p[1].toFixed(3)+','+p[2].toFixed(3);if(!mp.has(key))mp.set(key,mp.size);vid[o]=mp.get(key)}));
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));g.userData={vid,nv:mp.size};
-  const cv=document.createElement('canvas');cv.width=768*n;cv.height=1024;const cx=cv.getContext('2d');D.forEach((e,i)=>cx.drawImage(e.im,i*768,0,768,1024));
+  const cv=document.createElement('canvas');cv.width=768*GC;cv.height=1024*GR;const cx=cv.getContext('2d');D.forEach((e,i)=>cx.drawImage(e.im,(i%GC)*768,Math.floor(i/GC)*1024,768,1024));
   const tex=new THREE.CanvasTexture(cv);tex.encoding=THREE.sRGBEncoding;tex.anisotropy=4;
   $('#width').value=Math.round((mx[0]-mn[0])*(+$('#ipd').value||63)/D[0].ipd);PH.wk=(mx[0]-mn[0])/D[0].ipd; // 눈동자 간격(실측)으로 mm 크기 보정
   setup(g,new THREE.MeshStandardMaterial({map:tex,roughness:.8,metalness:0}));
@@ -551,19 +613,25 @@ function build(D){const st=$('#phst');
   if($('#ed').style.display==='flex')edDraw();
  }catch(e){st.textContent='⚠ '+(e.message||e)}
 }
-$('#sil').onchange=$('#dense').onchange=()=>CUR&&build(CUR);
+$('#sil').onchange=$('#dense').onchange=$('#eyelod').onchange=()=>CUR&&build(CUR);
+$('#pm').onchange=()=>{if(CUR){CUR.pmDone=false;build(CUR)}};
+$('#retry').onclick=retryFailed;
 const EDP=[[1,'코끝'],[168,'미간'],[133,'눈 앞쪽끝'],[362,'눈 앞쪽끝(반대)'],[33,'눈 바깥끝'],[263,'눈 바깥끝(반대)'],[159,'윗눈꺼풀'],[386,'윗눈꺼풀(반대)'],[145,'아래눈꺼풀'],[374,'아래눈꺼풀(반대)'],[172,'턱선'],[397,'턱선(반대)'],[0,'윗입술'],[17,'아랫입술'],[152,'턱끝'],[50,'광대'],[280,'광대(반대)'],[10,'이마'],[129,'콧방울'],[358,'콧방울(반대)']];
-let edK=1,edDrag=null,edPend=[],edLast=null;const edMode=()=>document.querySelector('input[name=edm]:checked').value;
+let edK=1,edDrag=null,edPend=[],edLast=null,edOff=[0,0];
+const EXT=[[107,'눈썹머리'],[336,'눈썹머리(반대)'],[105,'눈썹산'],[334,'눈썹산(반대)'],[70,'눈썹꼬리'],[300,'눈썹꼬리(반대)'],[2,'코 아래'],[164,'인중'],[13,'윗입술 안쪽'],[14,'아랫입술 안쪽'],[61,'입꼬리'],[291,'입꼬리(반대)'],[205,'볼 중앙'],[425,'볼 중앙(반대)'],[234,'얼굴 옆선'],[454,'얼굴 옆선(반대)'],[136,'턱선 중간'],[365,'턱선 중간(반대)'],[21,'관자놀이'],[251,'관자놀이(반대)']];const edMode=()=>document.querySelector('input[name=edm]:checked').value;
 const edCol=v=>v>.03?'#ff5a5a':v>.015?'#ffb84d':'#5adb8a';
 function edDraw(){if(!CUR||!PH||!PH.err)return;const c=$('#edc'),e=CUR[EDI],g=c.getContext('2d');
  edK=Math.min(($('#edmain').clientWidth-($('#edside').offsetWidth||0)-10)/e.W,($('#edmain').clientHeight-10)/e.H);
  c.width=Math.round(e.W*edK);c.height=Math.round(e.H*edK);g.drawImage(e.im,0,0,c.width,c.height);if(e.moc){g.imageSmoothingEnabled=false;g.drawImage(e.moc,0,0,c.width,c.height)} // 하늘색=추출된 윤곽
  const t=PH.Ts[EDI]||ID;
  const mode=edMode();
- if(mode==='liq'){const Q=PH.Xg.map(p=>proj(t,p)),N=vnorm(PH.Xg,PH.T),d=[t.R[2],t.R[5],t.R[8]],f=v=>N[v][0]*d[0]+N[v][1]*d[1]+N[v][2]*d[2];
+ if(mode==='liq'||mode==='pin'){const Q=PH.Xg.map(p=>proj(t,p)),N=vnorm(PH.Xg,PH.T),d=[t.R[2],t.R[5],t.R[8]],f=v=>N[v][0]*d[0]+N[v][1]*d[1]+N[v][2]*d[2];
   g.strokeStyle='rgba(255,122,156,.6)';g.beginPath();
   for(const[a,b,cc]of PH.T){if(f(a)+f(b)+f(cc)<0)continue;g.moveTo(Q[a][0]*edK,-Q[a][1]*edK);g.lineTo(Q[b][0]*edK,-Q[b][1]*edK);g.lineTo(Q[cc][0]*edK,-Q[cc][1]*edK);g.closePath()}g.stroke()}
- (mode!=='liq'?EDP:[]).forEach(([id,nm])=>{const p=e.P[id],x=p[0]*edK,y=-p[1]*edK,q=proj(t,PH.Xg[id]),er=PH.err[EDI][id];
+ if(mode==='pin'){const N2=vnorm(PH.Xg,PH.T),d2=[t.R[2],t.R[5],t.R[8]];
+  EXT.forEach(([id,nm])=>{const n2=N2[id];if(n2[0]*d2[0]+n2[1]*d2[1]+n2[2]*d2[2]<.1)return;const q=proj(t,PH.Xg[id]);
+   g.fillStyle='#ffb84d';g.beginPath();g.arc(q[0]*edK,-q[1]*edK,6,0,7);g.fill();g.fillStyle='#fff';g.font='11px sans-serif';g.fillText(nm,q[0]*edK+8,-q[1]*edK-6)})}
+ (mode==='move'||mode==='mtp'?EDP:[]).forEach(([id,nm])=>{const p=e.P[id],x=p[0]*edK,y=-p[1]*edK,q=proj(t,PH.Xg[id]),er=PH.err[EDI][id];
   g.strokeStyle='#ffe14d';g.beginPath();g.moveTo(x,y);g.lineTo(q[0]*edK,-q[1]*edK);g.stroke(); // 3D와 일치하는 위치로 이어진 선(길수록 사진 간 불일치)
   g.fillStyle=edCol(er);g.beginPath();g.arc(x,y,6,0,7);g.fill();g.fillStyle='#fff';g.font='11px sans-serif';g.fillText(nm,x+8,y-6)});
  const box=(o,col)=>{g.strokeStyle=col;g.lineWidth=2;g.strokeRect(o[1]*edK-6,-o[2]*edK-6,12,12);g.lineWidth=1};
@@ -572,16 +640,19 @@ function edDraw(){if(!CUR||!PH||!PH.err)return;const c=$('#edc'),e=CUR[EDI],g=c.
  const rows=EDP.map(([id,nm])=>[nm,PH.err[EDI][id]]).sort((a,b)=>b[1]-a[1]);
  $('#edside').innerHTML='<b>점별 사진 간 불일치 (얼굴 폭 대비)</b>'+rows.map(([n,v])=>`<div style="color:${edCol(v)}">${n} ${(v*100).toFixed(1)}%</div>`).join('')
   +'<br><b>추가 특징점 '+MTP.length+'개</b>'+MTP.map((m,i)=>`<div>#${i+1} (사진 ${m.o.map(o=>o[0]+1).join('·')}) <a href="#" data-d="${i}" style="color:#ff7a9c">삭제</a></div>`).join('')
-  +'<p style="color:#9aa0aa">메시 밀기: 분홍 메시를 사진 속 얼굴 윤곽(하늘색 선 참고)에 맞게 밀어서 맞추세요. 포토샵 리퀴파이처럼 끌면 되고, 정면 사진은 폭·길이를, 옆 사진은 코·입·턱 돌출을 바로잡아요. 점 옮기기: 점을 끌어 사진 속 실제 위치에 놓으세요(주변 메쉬도 함께 움직여요). 특징점 추가: 같은 부위를 사진마다 한 번씩 클릭(2장 이상) 후 "확정". 마지막에 "적용".</p>'}
+  +'<p style="color:#9aa0aa">특징점 끌기: 주황 점(눈썹·입꼬리·볼 등)을 사진 속 실제 위치로 끌면 주변 메시도 함께 따라와요(범위는 브러시 슬라이더). 메시 밀기: 분홍 메시를 사진 속 얼굴 윤곽(하늘색 선 참고)에 맞게 밀어서 맞추세요. 포토샵 리퀴파이처럼 끌면 되고, 정면 사진은 폭·길이를, 옆 사진은 코·입·턱 돌출을 바로잡아요. 점 옮기기: 점을 끌어 사진 속 실제 위치에 놓으세요(주변 메쉬도 함께 움직여요). 특징점 추가: 같은 부위를 사진마다 한 번씩 클릭(2장 이상) 후 "확정". 마지막에 "적용".</p>'}
 function edWarp(e,id,x,y){const p=e.P[id],px=p[0],py=p[1],dx=x-px,dy=y-py,sg=.05*PH.fw[EDI];
  for(let v=0;v<e.P.length;v++){const q=e.P[v],w=Math.exp(-.5*Math.pow(Math.hypot(q[0]-px,q[1]-py)/sg,2));if(w<.01)continue;q[0]+=dx*w;q[1]+=dy*w;e.uv[v][0]=q[0]/e.W;e.uv[v][1]=-q[1]/e.H}}
 const edc=$('#edc'),edXY=ev=>{const r=edc.getBoundingClientRect(),k=edc.width/r.width/edK;return[(ev.clientX-r.left)*k,-(ev.clientY-r.top)*k]};
 edc.addEventListener('pointerdown',ev=>{if(!CUR)return;const[x,y]=edXY(ev),e=CUR[EDI];
- if(edMode()==='liq'){edDrag='L';edLast=[x,y];edc.setPointerCapture(ev.pointerId);return}
+ if(edMode()==='pin'){let b=null,bd=16/edK;const N2=vnorm(PH.Xg,PH.T),t=PH.Ts[EDI]||ID,d2=[t.R[2],t.R[5],t.R[8]]; // 추가 특징점을 잡으면 주변 메시가 함께 따라와요
+  EXT.forEach(([id])=>{const n2=N2[id];if(n2[0]*d2[0]+n2[1]*d2[1]+n2[2]*d2[2]<.1)return;const q=proj(t,PH.Xg[id]),dd=Math.hypot(q[0]-x,q[1]-y);if(dd<bd){bd=dd;b=q}});
+  if(b){edDrag='L';edLast=b;edOff=[x-b[0],y-b[1]];edc.setPointerCapture(ev.pointerId)}return}
+ if(edMode()==='liq'){edDrag='L';edLast=[x,y];edOff=[0,0];edc.setPointerCapture(ev.pointerId);return}
  if(edMode()==='mtp'){edPend=edPend.filter(o=>o[0]!==EDI);edPend.push([EDI,x,y]);$('#edmtp').disabled=edPend.length<2;edDraw();return}
  let b=null,bd=14/edK;EDP.forEach(([id])=>{const d=Math.hypot(e.P[id][0]-x,e.P[id][1]-y);if(d<bd){bd=d;b=id}});
  if(b!==null){edDrag=b;edc.setPointerCapture(ev.pointerId)}});
-edc.addEventListener('pointermove',ev=>{if(edDrag===null)return;const[x,y]=edXY(ev);if(edDrag==='L'){liq(EDI,edLast,x-edLast[0],y-edLast[1]);edLast=[x,y]}else edWarp(CUR[EDI],edDrag,x,y);edDraw()});
+edc.addEventListener('pointermove',ev=>{if(edDrag===null)return;const[x,y]=edXY(ev);if(edDrag==='L'){const tx=x-edOff[0],ty=y-edOff[1];liq(EDI,edLast,tx-edLast[0],ty-edLast[1]);edLast=[tx,ty]}else edWarp(CUR[EDI],edDrag,x,y);edDraw()});
 edc.addEventListener('pointerup',()=>{edDrag=null});
 $('#edtabs').onclick=ev=>{if(ev.target.dataset.t!==undefined){EDI=+ev.target.dataset.t;edDraw()}};
 $('#edside').onclick=ev=>{if(ev.target.dataset.d!==undefined){ev.preventDefault();MTP.splice(+ev.target.dataset.d,1);edDraw()}};
