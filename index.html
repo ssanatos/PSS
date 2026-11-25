@@ -39,7 +39,11 @@ input[type=number]{width:80px;background:#12151a;color:var(--tx);border:1px soli
  <p class="s">얼굴 3D 스캔에 시술 정도(mm)를 적용해 예상 모습을 미리 봅니다. 파일은 서버로 전송되지 않고 브라우저 안에서만 처리돼요.</p>
  <h2>0. 사진으로 얼굴 만들기 (베타)</h2>
  <label class="btn pri" style="display:inline-block">얼굴 사진 선택 (여러 장, 최대 7장)<input id="ph" type="file" accept="image/*" multiple hidden></label>
+ <label class="btn" style="display:inline-block;margin-left:6px">또는 영상 선택<input id="vid" type="file" accept="video/*" hidden></label>
+ <label class="s">프레임 수 <select id="vframes"><option>16</option><option selected>24</option><option>40</option></select></label>
+ <details class="s"><summary style="cursor:pointer">영상 촬영 가이드</summary><div style="margin-top:4px">• 5~10초, 정면에서 시작해 고개를 천천히 좌우로(약 ±70°) 돌려요. 카메라는 고정하고 얼굴만 돌리세요.<br>• 중간에 턱을 살짝 들었다 내리기를 한 번씩 넣으면 깊이가 좋아져요.<br>• 창가의 부드러운 빛, 그림자·역광 없이. 무표정, 입 다묾, 머리카락·안경이 얼굴을 가리지 않게.<br>• 얼굴이 화면의 절반 이상을 차지하게, 같은 거리 유지.</div></details>
  <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="sil"> 사진 윤곽선으로 얼굴형 보정 (실험적 · 켜고 겹쳐보기로 비교하세요)</label>
+ <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="prof" checked> 옆모습 윤곽으로 코·입·턱 중심선 정밀 맞춤 (약 60° 이상 옆 사진 필요)</label>
  <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="pm" checked> 사진 색 변화로 사진 간 위치 맞추기 (눈썹·눈 등 어긋남 보정)</label>
  <label class="s" style="display:block;margin:6px 0"><input type="checkbox" id="dense"> 사진 질감 매칭으로 표면 정밀화 (실험적 · 카메라 추정이 정확할 때만 도움, 끄는 걸 기본으로 권장)</label>
  <p class="s" id="phst" style="white-space:pre-line">정면·45°·측면 사진을 한꺼번에 고르세요(순서 무관, 정면은 자동 판별). 무표정·입 다문 사진, 머리카락이 얼굴을 가리지 않게 찍어주세요. 사진은 서버로 전송되지 않고, 얼굴 인식 모델 파일만 내려받아요.</p>
@@ -495,8 +499,32 @@ function photoMatch(X,T,Ts,G,Po){const n=X.length,V=G.length,nb=X.map(()=>[]);fo
   for(let it=0;it<60;it++)for(let v=0;v<n;v++){if(known[v]||!nb[v].length)continue;let sx=0,sy=0;for(const u of nb[v]){sx+=cc[u][0];sy+=cc[u][1]}cc[v]=[sx/nb[v].length,sy/nb[v].length]}
   const cap=.03*fw;out[i]=cc.map(c=>{const l=Math.hypot(c[0],c[1]);return l>cap?[c[0]*cap/l,c[1]*cap/l]:c})}
  return out}
+// 영상 프레임 중 (좌우 각도, 위아래 각도)가 서로 최대한 다른 선명한 프레임을 고른다 (가장 정면인 프레임이 첫 번째)
+function pickFrames(it,K){const sh=it.map(e=>e.sharp).sort((a,b)=>a-b),med=sh[sh.length>>1],ok=it.map((e,i)=>i).filter(i=>it[i].sharp>=.5*med);
+ const dist=(a,b)=>Math.abs(it[a].yawS-it[b].yawS)+.7*Math.abs(it[a].pitch-it[b].pitch),mag=i=>Math.abs(it[i].yawS)+.7*Math.abs(it[i].pitch),pick=[];
+ let f=ok[0];for(const i of ok)if(mag(i)<mag(f))f=i;pick.push(f);
+ while(pick.length<Math.min(K,ok.length)){let b=-1,bs=-1;for(const i of ok){if(pick.includes(i))continue;const sc=Math.min(...pick.map(j=>dist(i,j)))+1e-3*it[i].sharp/(med+1e-9);if(sc>bs){bs=sc;b=i}}pick.push(b)}
+ return pick}
+// 옆모습(약 60° 이상) 사진의 윤곽선에 코·입·턱 중심선(chain)을 맞춘다: 중심선만 정밀하게 맞추고 주변은 자연스럽게 따라가게 함
+function profileFit(X,T,Ts,i,m,chain,wv){const n=X.length,nb=X.map(()=>[]),ec=new Map(),bd=new Uint8Array(n);
+ for(const[a,b,c]of T){nb[a].push(b,c);nb[b].push(a,c);nb[c].push(a,b);for(const[u,v]of[[a,b],[b,c],[c,a]]){const k=u<v?u+'_'+v:v+'_'+u;ec.set(k,(ec.get(k)||0)+1)}}
+ for(const[k,c]of ec)if(c===1){const[u,v]=k.split('_');bd[u]=bd[v]=1}
+ const t=Ts[i],R=t.R,fx=R[6],fy=R[7],fl=Math.hypot(fx,fy);if(fl<.5)return X;
+ const ux=fx/fl,uy=fy/fl;let x0=1e18,x1=-1e18;for(const p of X){x0=Math.min(x0,p[0]);x1=Math.max(x1,p[0])}
+ const L=.14*(x1-x0)/t.s,ins=(x,y)=>{const ix=Math.floor(x/m.W*m.w),iy=Math.floor(-y/m.H*m.h);return ix>=0&&iy>=0&&ix<m.w&&iy<m.h?m.b[iy*m.w+ix]:0};
+ let dl=chain.map(v=>{const q=proj(t,X[v]);for(let k=Math.floor(L);k>=-L;k--)if(ins(q[0]+ux*k,q[1]+uy*k))return k>=Math.floor(L)?null:k+.5;return null}); // 얼굴 앞쪽(바깥)에서 안쪽으로 처음 만나는 윤곽
+ const good=dl.filter(v=>v!==null);if(good.length<.4*chain.length)return X;
+ for(let k=0;k<dl.length;k++)if(dl[k]===null){let a=k-1,b=k+1;while(a>=0&&dl[a]===null)a--;while(b<dl.length&&dl[b]===null)b++;
+  dl[k]=a>=0&&b<dl.length?dl[a]+(dl[b]-dl[a])*(k-a)/(b-a):a>=0?dl[a]:dl[b]}
+ for(let it=0;it<3;it++)dl=dl.map((v,k)=>.25*dl[Math.max(0,k-1)]+.5*v+.25*dl[Math.min(dl.length-1,k+1)]); // 곡선이 매끈하도록
+ const cap=.06*(x1-x0)/t.s,D=X.map(()=>[0,0,0]),c=new Uint8Array(n);
+ chain.forEach((v,k)=>{const d=Math.max(-cap,Math.min(cap,dl[k])),dx=d*ux,dy=d*uy;c[v]=1;for(let a=0;a<3;a++)D[v][a]=t.s*(R[a*3]*dx+R[a*3+1]*dy)*wv});
+ for(let v=0;v<n;v++)if(bd[v]&&!c[v])c[v]=2; // 메쉬 가장자리는 고정
+ for(let it=0;it<40;it++)for(let v=0;v<n;v++){if(c[v]||!nb[v].length)continue;const sm=[0,0,0];for(const u of nb[v])for(let a=0;a<3;a++)sm[a]+=D[u][a];for(let a=0;a<3;a++)D[v][a]=sm[a]/nb[v].length}
+ return X.map((p,v)=>[p[0]+.9*D[v][0],p[1]+.9*D[v][1],p[2]+.9*D[v][2]])}
 //</math>
 
+const PCH=[168,6,197,195,5,4,1,19,94,2,164,0,11,12,13,14,15,16,17,18,200,199,175,152]; // 콧대~턱끝 중심선
 let lastFiles=null,PH=null,CUR=null,MTP=[],EDI=0,MAN=null;
 const LMI=[1,168,133,33,159,145,172,0,17,152,50,10,129]; // STEPS 순서의 MediaPipe 랜드마크 번호
 let flm=null;
@@ -535,10 +563,10 @@ function drawOv(D,Ts,X,T){const box=$('#ovl');box.innerHTML='';const N=vnorm(X,T
   g.stroke();box.append(c)})}
 const loadImg=f=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=URL.createObjectURL(f)});
 let PEND=[];
-async function readPhoto(L,f,im,st){let q=null; // 같은 사진도 가끔 실패하므로 몇 번 다시 시도
+async function readPhoto(L,f,im,st,lite){let q=null; // 같은 사진도 가끔 실패하므로 몇 번 다시 시도
  for(let k=0;k<3&&!q;k++){q=detectFace(L,im);if(!q)await new Promise(r=>setTimeout(r,150))}
  if(!q)return null;const W=im.naturalWidth,H=im.naturalHeight,a=q[234],b=q[454],i1=q[468],i2=q[473];
- return{im,name:f.name,uv:q.slice(0,478).map(p=>[p.x,p.y]),P:q.slice(0,478).map(p=>[p.x*W,-p.y*H,-p.z*W]),W,H,mask:await getMask(im,st,f.name),
+ return{im,name:f.name,uv:q.slice(0,478).map(p=>[p.x,p.y]),P:q.slice(0,478).map(p=>[p.x*W,-p.y*H,-p.z*W]),W,H,mask:lite?null:await getMask(im,st,f.name),sharp:sharpOf(im,q),yawS:Math.sign(a.z-b.z)*Math.atan2(Math.abs(a.z-b.z),Math.abs(a.x-b.x)),pitch:Math.atan2(q[152].z-q[10].z,(q[152].y-q[10].y)*H/W),
   yaw:Math.atan2(Math.abs(a.z-b.z),Math.abs(a.x-b.x)),ipd:Math.hypot((i1.x-i2.x)*W,(i1.y-i2.y)*H,(i1.z-i2.z)*W)}}
 async function retryFailed(){const st=$('#phst');if(!PEND.length)return;
  try{st.textContent='실패한 사진을 다시 읽는 중…';let L=await getLM();const still=[],got=[];
@@ -548,6 +576,32 @@ async function retryFailed(){const st=$('#phst');if(!PEND.length)return;
   if(!got.length){st.textContent='⚠ 이번에도 읽지 못했어요 ('+PEND.length+'장). 다시 눌러 보세요.';return}
   if(!CUR){got.sort((a,b)=>a.yaw-b.yaw);CUR=got;MTP=[];MAN=null;EDI=0}else{for(const e of got)CUR.push(e);CUR.pmDone=false} // 기준 사진은 그대로 두고 뒤에 추가
   build(CUR);if(PEND.length)st.textContent+='\n⚠ 아직 못 읽은 사진 '+PEND.length+'장 (다시 읽기 가능)'
+ }catch(e){st.textContent='⚠ '+(e.message||e)}}
+function sharpOf(im,q){let x0=1,x1=0,y0=1,y1=0;for(const p of q){x0=Math.min(x0,p.x);x1=Math.max(x1,p.x);y0=Math.min(y0,p.y);y1=Math.max(y1,p.y)}
+ const W=im.naturalWidth,H=im.naturalHeight,c=document.createElement('canvas');c.width=c.height=96;const g=c.getContext('2d');
+ g.drawImage(im,Math.max(0,x0*W),Math.max(0,y0*H),Math.max(2,(x1-x0)*W),Math.max(2,(y1-y0)*H),0,0,96,96);
+ const d=g.getImageData(0,0,96,96).data,a=new Float32Array(9216);for(let i=0;i<9216;i++)a[i]=d[i*4]*.299+d[i*4+1]*.587+d[i*4+2]*.114;
+ let s=0,s2=0,n=0;for(let y=1;y<95;y++)for(let x=1;x<95;x++){const i=y*96+x,l=4*a[i]-a[i-1]-a[i+1]-a[i-96]-a[i+96];s+=l;s2+=l*l;n++}return s2/n-(s/n)*(s/n)} // 선명도(라플라시안 분산)
+async function videoFrames(file,N,st){const url=URL.createObjectURL(file),v=document.createElement('video');v.muted=true;v.playsInline=true;v.preload='auto';v.src=url;
+ await new Promise((res,rej)=>{v.onloadedmetadata=res;v.onerror=()=>rej(Error('영상을 열 수 없어요. mp4(H.264) 형식을 권장해요.'))});
+ const dur=v.duration;if(!(dur>0.5))throw Error('영상이 너무 짧아요.');
+ const k=Math.min(1,1024/Math.max(v.videoWidth,v.videoHeight)),w=Math.round(v.videoWidth*k),h=Math.round(v.videoHeight*k),out=[];
+ for(let i=0;i<N;i++){st.textContent='영상에서 프레임 추출 중… '+(i+1)+'/'+N;v.currentTime=dur*(i+.5)/N;
+  await new Promise(r=>{let done=false;const f=()=>{if(!done){done=true;r()}};v.onseeked=f;setTimeout(f,3000)});
+  const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(v,0,0,w,h);
+  out.push(await loadImg(await new Promise(r=>c.toBlob(r,'image/jpeg',.92))))}
+ URL.revokeObjectURL(url);return out}
+async function fromVideo(file){const st=$('#phst');lastFiles=null;
+ try{if(!window.MP)throw Error('얼굴 인식 라이브러리를 아직 불러오지 못했어요. 잠시 후 다시 시도하세요.');
+  const frames=await videoFrames(file,+$('#vframes').value||24,st),L=await getLM(),items=[];PEND=[];
+  for(let i=0;i<frames.length;i++){st.textContent='프레임 분석 중… '+(i+1)+'/'+frames.length;await new Promise(r=>setTimeout(r));
+   const e=await readPhoto(L,{name:'프레임'+(i+1)},frames[i],st,true);if(e)items.push(e)}
+  if(items.length<3)throw Error('얼굴이 읽힌 프레임이 '+items.length+'장뿐이에요. 얼굴이 크게 보이게, 밝은 곳에서 다시 촬영해 보세요.');
+  const D=pickFrames(items,12).map(k=>items[k]);st.textContent='윤곽 추출 중…';
+  for(const e of D)e.mask=await getMask(e.im,st,e.name);
+  D.forEach((e,i)=>e.tex=i<8); // 텍스처는 가장 다양한 8장, 형태 계산에는 전부 사용
+  CUR=D;MTP=[];MAN=null;EDI=0;$('#retry').style.display='none';build(D);
+  st.textContent+='\n(영상 '+frames.length+'프레임 중 '+items.length+'장에서 얼굴 인식, 서로 가장 다른 '+D.length+'장 사용)'
  }catch(e){st.textContent='⚠ '+(e.message||e)}}
 async function fromPhotos(fs){
  const st=$('#phst');lastFiles=fs;
@@ -578,6 +632,8 @@ function build(D){const st=$('#phst');
    return{W:e.W,H:e.H,w:e.mask.w,h:e.mask.h,b:pm?e.mask.pb:e.mask.b,sdf:pm?e.mask.psdf:e.mask.sdf}});
   D.forEach((e,i)=>{e.moc=M[i]?outline(M[i]):null});
   if($('#sil').checked&&M.some(Boolean))X=silFit(X,T,Ts,M,X[168][1],2); // 사진 윤곽선에 맞춰 얼굴형 보정
+  let pvn=0;if($('#prof').checked){const pv=D.map((e,i)=>i).filter(i=>i>0&&D[i].yaw>=1.0&&M[i]); // 약 57° 이상 옆모습 사진
+   for(const i of pv)X=profileFit(X,T,Ts,i,M[i],PCH,Math.min(1,(D[i].yaw-.9)/.55));pvn=pv.length}
   if($('#dense').checked){D.forEach(e=>{if(!e.g)e.g=grayOf(e.im)});X=denseRefine(X,T,Ts,D.map(e=>e.g),2)} // 실험적
   if(MAN)X=X.map((p,v)=>[p[0]+MAN[v][0],p[1]+MAN[v][1],p[2]+MAN[v][2]]); // 사람이 직접 민 만큼 반영
   for(let i=1;i<n;i++)d[i]=[Ts[i].R[2],Ts[i].R[5],Ts[i].R[8]];
@@ -590,11 +646,12 @@ function build(D){const st=$('#phst');
   const ec=[[33,133],[263,362]].map(([a,b])=>RV[a].map((v,k)=>(v+RV[b][k])/2)),er=.75*Math.hypot(RV[33][0]-RV[133][0],RV[33][1]-RV[133][1],RV[33][2]-RV[133][2]);
   const inEye=v=>ec.some(c=>Math.hypot(RV[v][0]-c[0],RV[v][1]-c[1],RV[v][2]-c[2])<er);
   for(let l=0;l<(+$('#eyelod').value||0);l++)RT=refineRegion(RV,RUV,RT,inEye);
-  const N=vnorm(RV,RT),GC=Math.min(n,4),GR=Math.ceil(n/GC);
-  let tris=RT.map(t=>{const nn=[0,1,2].map(k=>t.reduce((s,v)=>s+N[v][k],0));let b=0,bv=-9;
-   d.forEach((di,i)=>{const c=nn[0]*di[0]+nn[1]*di[1]+nn[2]*di[2];
+  const TX=[];D.forEach((e,i)=>{if(e.tex!==false&&TX.length<8)TX.push(i)});if(!TX.length)TX.push(0);
+  const N=vnorm(RV,RT),GC=Math.min(TX.length,4),GR=Math.ceil(TX.length/GC),sl=i=>TX.indexOf(i);
+  let tris=RT.map(t=>{const nn=[0,1,2].map(k=>t.reduce((s,v)=>s+N[v][k],0));let b=TX[0],bv=-9;
+   d.forEach((di,i)=>{if(sl(i)<0)return;const c=nn[0]*di[0]+nn[1]*di[1]+nn[2]*di[2];
     if(c>bv&&t.every(v=>{const u=RUV[i][v];return u[0]>0&&u[0]<1&&u[1]>0&&u[1]<1})){bv=c;b=i}});
-   return t.map(v=>[...RV[v],((b%GC)+RUV[b][v][0])/GC,1-(Math.floor(b/GC)+RUV[b][v][1])/GR])});
+   const k=sl(b);return t.map(v=>[...RV[v],((k%GC)+RUV[b][v][0])/GC,1-(Math.floor(k/GC)+RUV[b][v][1])/GR])});
   for(let l=0;l<(+$('#lod').value||2);l++)tris=sub(tris);
   const mn=[1e9,1e9,1e9],mx=[-1e9,-1e9,-1e9];
   for(const t of tris)for(const p of t)for(let k=0;k<3;k++){mn[k]=Math.min(mn[k],p[k]);mx[k]=Math.max(mx[k],p[k])}
@@ -602,20 +659,21 @@ function build(D){const st=$('#phst');
   tris.forEach((t,i)=>t.forEach((p,j)=>{const o=i*3+j;for(let k=0;k<3;k++)pos[o*3+k]=p[k]-c[k];uv[o*2]=p[3];uv[o*2+1]=p[4];
    const key=p[0].toFixed(3)+','+p[1].toFixed(3)+','+p[2].toFixed(3);if(!mp.has(key))mp.set(key,mp.size);vid[o]=mp.get(key)}));
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('uv',new THREE.BufferAttribute(uv,2));g.userData={vid,nv:mp.size};
-  const cv=document.createElement('canvas');cv.width=768*GC;cv.height=1024*GR;const cx=cv.getContext('2d');D.forEach((e,i)=>cx.drawImage(e.im,(i%GC)*768,Math.floor(i/GC)*1024,768,1024));
+  const cv=document.createElement('canvas');cv.width=768*GC;cv.height=1024*GR;const cx=cv.getContext('2d');TX.forEach((i,k)=>cx.drawImage(D[i].im,(k%GC)*768,Math.floor(k/GC)*1024,768,1024));
   const tex=new THREE.CanvasTexture(cv);tex.encoding=THREE.sRGBEncoding;tex.anisotropy=4;
   $('#width').value=Math.round((mx[0]-mn[0])*(+$('#ipd').value||63)/D[0].ipd);PH.wk=(mx[0]-mn[0])/D[0].ipd; // 눈동자 간격(실측)으로 mm 크기 보정
   setup(g,new THREE.MeshStandardMaterial({map:tex,roughness:.8,metalness:0}));
   PH.c=c;PH.X=X.map(p=>[p[0]-c[0],p[1]-c[1],p[2]-c[2]]);
   LMI.forEach((id,t)=>setLM(t,V(X[id][0]-c[0],X[id][1]-c[1],X[id][2]-c[2])));
   sel=-1;apply();ui();
-  st.textContent='✅ 사진 '+n+'장으로 얼굴을 만들고 기준점 '+LMI.length+'개를 자동 배치했어요. 어긋난 점은 아래 목록에서 골라 다시 찍으세요. 가로폭(mm)은 눈동자 간격 '+(+$('#ipd').value||63)+'mm 기준 추정값이에요.'+(M.some(Boolean)?' 얼굴 윤곽 보정 적용됨(위 사진의 분홍 선이 겹친 메쉬).':'');
+  st.textContent='✅ 사진 '+n+'장으로 얼굴을 만들고 기준점 '+LMI.length+'개를 자동 배치했어요. 어긋난 점은 아래 목록에서 골라 다시 찍으세요. 가로폭(mm)은 눈동자 간격 '+(+$('#ipd').value||63)+'mm 기준 추정값이에요.'+(pvn?' 옆모습 '+pvn+'장으로 코·입·턱 중심선 맞춤.':'')+(M.some(Boolean)?' 얼굴 윤곽 보정 적용됨(위 사진의 분홍 선이 겹친 메쉬).':'');
   if($('#ed').style.display==='flex')edDraw();
  }catch(e){st.textContent='⚠ '+(e.message||e)}
 }
-$('#sil').onchange=$('#dense').onchange=$('#eyelod').onchange=()=>CUR&&build(CUR);
+$('#sil').onchange=$('#dense').onchange=$('#eyelod').onchange=$('#prof').onchange=()=>CUR&&build(CUR);
 $('#pm').onchange=()=>{if(CUR){CUR.pmDone=false;build(CUR)}};
 $('#retry').onclick=retryFailed;
+$('#vid').onchange=e=>e.target.files[0]&&fromVideo(e.target.files[0]);
 const EDP=[[1,'코끝'],[168,'미간'],[133,'눈 앞쪽끝'],[362,'눈 앞쪽끝(반대)'],[33,'눈 바깥끝'],[263,'눈 바깥끝(반대)'],[159,'윗눈꺼풀'],[386,'윗눈꺼풀(반대)'],[145,'아래눈꺼풀'],[374,'아래눈꺼풀(반대)'],[172,'턱선'],[397,'턱선(반대)'],[0,'윗입술'],[17,'아랫입술'],[152,'턱끝'],[50,'광대'],[280,'광대(반대)'],[10,'이마'],[129,'콧방울'],[358,'콧방울(반대)']];
 let edK=1,edDrag=null,edPend=[],edLast=null,edOff=[0,0];
 const EXT=[[107,'눈썹머리'],[336,'눈썹머리(반대)'],[105,'눈썹산'],[334,'눈썹산(반대)'],[70,'눈썹꼬리'],[300,'눈썹꼬리(반대)'],[2,'코 아래'],[164,'인중'],[13,'윗입술 안쪽'],[14,'아랫입술 안쪽'],[61,'입꼬리'],[291,'입꼬리(반대)'],[205,'볼 중앙'],[425,'볼 중앙(반대)'],[234,'얼굴 옆선'],[454,'얼굴 옆선(반대)'],[136,'턱선 중간'],[365,'턱선 중간(반대)'],[21,'관자놀이'],[251,'관자놀이(반대)']];const edMode=()=>document.querySelector('input[name=edm]:checked').value;
